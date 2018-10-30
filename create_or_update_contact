@@ -139,13 +139,13 @@ DECLARE CONTINUE HANDLER FOR NOT FOUND SET EOF = 1;
 					SELECT ENUM_CODE,ENUM_ID  INTO sENUM_CODE,sENUM_ID FROM ENUMERATION WHERE enum_type_id='PARTY_DESIGNATION' AND DESCRIPTION=sRP_DESGINATION LIMIT 1;
 						
                         -- Update the Default Contact Status if the Account and Contact Designation Code Matches
-                        IF (sENUM_CODE='012')  THEN
+                      /*  IF (sENUM_CODE='112')  THEN
                                 UPDATE party_relationship SET STATUS_ID='PARTY_DEFAULT',is_marketable='Y',created_By_User_Login_Id ='admin' 
                                 WHERE PARTY_ID_FROM=sPartyId AND PARTY_ID_TO=sLCIN AND ROLE_TYPE_ID_FROM = 'CONTACT' AND  ROLE_TYPE_ID_TO ='ACCOUNT' ;
                         ELSE
 								        UPDATE party_relationship SET STATUS_ID=null, is_marketable='Y',created_By_User_Login_Id ='admin' 
                                 WHERE PARTY_ID_FROM=sPartyId AND PARTY_ID_TO=sLCIN AND ROLE_TYPE_ID_FROM = 'CONTACT' AND  ROLE_TYPE_ID_TO ='ACCOUNT' ;        
-                        END IF ;        
+                        END IF ;    */    
                         -- Update the ***Designation*** of the Current Row of Contact based on the Association of Account             
 
 								SET  ENUM_EXIST =(SELECT COUNT(*) FROM hdp_contact_designation_assoc WHERE ACCOUNT_ID = sLCIN AND CONTACT_ID = sPartyId 
@@ -509,7 +509,7 @@ DECLARE CONTINUE HANDLER FOR NOT FOUND SET EOF = 1;
 												SELECT ENUM_CODE,ENUM_ID  INTO sENUM_CODE,sENUM_ID FROM ENUMERATION WHERE enum_type_id='PARTY_DESIGNATION' AND DESCRIPTION=sRP_DESGINATION LIMIT 1;
 					
 									-- Update the Default Contact Status if the Account and Contact Designation Code Matches
-											IF (sENUM_CODE='012')  THEN
+											IF (sENUM_CODE='112')  THEN
 													UPDATE party_relationship SET STATUS_ID='PARTY_DEFAULT',is_marketable='Y',created_By_User_Login_Id ='admin' 
 													WHERE PARTY_ID_FROM=sPartyId AND PARTY_ID_TO=sLCIN AND ROLE_TYPE_ID_FROM = 'CONTACT' AND  ROLE_TYPE_ID_TO ='ACCOUNT';
 											ELSE
