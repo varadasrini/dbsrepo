@@ -1,0 +1,723 @@
+BEGIN
+	DECLARE dtStart			    DATETIME DEFAULT NOW();
+	DECLARE timeEntry			DATETIME DEFAULT NOW();
+	DECLARE sPartyId		    VARCHAR(50);
+	DECLARE sFristName		    VARCHAR(60);
+	DECLARE sLastName           VARCHAR(60);
+	DECLARE sLCIN               VARCHAR(250);
+	DECLARE srp_bday            VARCHAR(10);
+	DECLARE sRP_DESGINATION     VARCHAR(60);
+	DECLARE sENUM_ID            VARCHAR(20);
+	DECLARE sParty_Rel_Assoc_Id VARCHAR(20);
+	DECLARE sFROM_DATE		 	DATETIME;
+	DECLARE sENUM_CODE          VARCHAR(20);
+	DECLARE sCNTRY_CDE          VARCHAR(20);
+	DECLARE sBUSINESS_DT		DATE;
+    DECLARE ENUM_EXIST          VARCHAR(20);
+	DECLARE rpIdealEmail		VARCHAR(255);
+	DECLARE rpAosEmail		    VARCHAR(255);
+	DECLARE rpIdealMobile		VARCHAR(255);
+	DECLARE rpAosMobile		    VARCHAR(255);
+	DECLARE primary_email		VARCHAR(255);
+	DECLARE primaryMobile		VARCHAR(255);
+    DECLARE pcontact_mech_id		    VARCHAR(255);
+    DECLARE ideal_mech_id			    VARCHAR(255);
+	
+	DECLARE primcontact_mech_id		    VARCHAR(255);
+	DECLARE Idealcontact_mech_id		VARCHAR(255);
+	DECLARE Aoscontact_mech_id		    VARCHAR(255);
+	DECLARE pPhonecontact_mech_id		VARCHAR(255);
+	DECLARE iDEALPhonecontact_mech_id   VARCHAR(255);
+	DECLARE aOSPhonecontact_mech_id		VARCHAR(255);
+	DECLARE contactMechId               VARCHAR(255);
+	DECLARE assocId                     VARCHAR(20);
+	DECLARE EMAIL_PREV					VARCHAR(255);
+	DECLARE TELE_PREV					VARCHAR(255);
+	DECLARE isAccountAvl				VARCHAR(1);
+	DECLARE sMode						VARCHAR(1);
+	DECLARE iCommit			    INT DEFAULT 0;
+	DECLARE EOF 			    INT DEFAULT 0;
+	DECLARE seqNo INT ;
+	DECLARE assId INT;
+	DECLARE sProcessId		    VARCHAR(255) DEFAULT 'hdp_contact';
+	DECLARE cur	CURSOR FOR
+		  SELECT 
+          DISTINCT RP_IDENTITYNO,
+          SUBSTRING_INDEX(SUBSTRING_INDEX(RP_FULLNAME, ' ', 1), ' ', -1),
+          TRIM(SUBSTR(RP_FULLNAME, LOCATE(' ', RP_FULLNAME))),LCIN,STR_TO_DATE(rp_bday, '%Y-%m-%d') AS rp_bday,UPPER(RP_DESIGNATION),CNTRY_CDE,BUSINESS_DT,`RP_IDEALEMAILADDRESS`, `RP_AOS_EMAILADDRESS`, `RP_IDEAL_MOBILENO`, `RP_AOS_MOBILENO`
+		  FROM hdp_contact WHERE   IMPORT_STATUS_ID IN('DATAIMP_NOT_PROC','DATAIMP_FAILED','DATAIMP_APPROVED','DATAIMP_INITIATE') OR IMPORT_STATUS_ID IS NULL;
+		 
+DECLARE CONTINUE HANDLER FOR NOT FOUND SET EOF = 1;
+	
+	CALL log_proc_start(sProcessId, dtStart);
+	
+	START TRANSACTION;
+	
+	OPEN cur;
+	
+	REPEAT
+	FETCH cur INTO sPartyId, sFristName, sLastName ,sLCIN,srp_bday,sRP_DESGINATION,sCNTRY_CDE,sBUSINESS_DT, rpIdealEmail, rpAosEmail, rpIdealMobile, rpAosMobile;
+	
+	IF NOT EOF THEN
+	
+	SELECT CASE WHEN COUNT(*) = 0 THEN 'N' ELSE 'Y' END INTO isAccountAvl  FROM PARTY_GROUP WHERE party_id  = sLCIN;
+		-- Perform Validation to check Party ID for Contact Exists in the Ofbiz tables or not
+	 IF ( (SELECT COUNT(party_id) FROM party WHERE party_id  = sPartyId) > 0) THEN
+			 
+			IF(isAccountAvl='Y') THEN
+				-- Update #1
+				 INSERT INTO LOG_PROC (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,'SUCCESS',0000,srp_bday,timeEntry,'PASSED');
+				 -- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1,LOG_MSG2,LOG_MSG3) VALUES (sProcessId,sFristName,'Initialize Data',sPartyId,NOW(),sRP_DESGINATION,sBUSINESS_DT,rpIdealEmail);
+				 UPDATE person SET 
+				 FIRST_NAME= sFristName,
+				 LAST_NAME= sLastName , 
+				 BIRTH_DATE= srp_bday,
+				 LAST_UPDATED_STAMP= timeEntry
+				  ,LAST_UPDATED_TX_STAMP= timeEntry
+				WHERE party_id = sPartyId;
+				 
+					-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,'SUCCESS','person',sPartyId,NOW(),'PASSED');
+								
+					-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,20,'party_role-started',sPartyId,NOW(),'CUSTOMER');	
+
+					INSERT INTO party_role(PARTY_ID,ROLE_TYPE_ID, LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+					VALUES(sPartyId,'CUSTOMER',timeEntry,timeEntry,timeEntry,timeEntry)
+					ON DUPLICATE KEY UPDATE LAST_UPDATED_TX_STAMP = timeEntry;
+
+					INSERT INTO party_role(PARTY_ID,ROLE_TYPE_ID, LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+					VALUES(sPartyId,'BILL_TO_CUSTOMER',timeEntry,timeEntry,timeEntry,timeEntry)
+					ON DUPLICATE KEY UPDATE LAST_UPDATED_TX_STAMP = timeEntry;
+
+					INSERT INTO party_role(PARTY_ID,ROLE_TYPE_ID, LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+					VALUES(sPartyId,'CONTACT',timeEntry,timeEntry,timeEntry,timeEntry)
+					ON DUPLICATE KEY UPDATE LAST_UPDATED_TX_STAMP = timeEntry;
+
+					-- Relationship for Contact					
+					-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,30,'party_relationship-started',sPartyId,NOW(),'RELATIONSHIP');	
+					
+					 SELECT CASE WHEN COUNT(*) = 0 THEN 'I' ELSE 'U' END INTO sMode  FROM party_relationship WHERE PARTY_ID_FROM =sPartyId AND PARTY_ID_TO='admin' AND
+                     ROLE_TYPE_ID_FROM ='CONTACT' AND ROLE_TYPE_ID_TO='EMPLOYEE' AND PARTY_RELATIONSHIP_TYPE_ID = 'RESPONSIBLE_FOR' LIMIT 1;
+					 
+					 IF(sMode='I') THEN
+						INSERT INTO party_relationship
+						(PARTY_ID_FROM, PARTY_ID_TO, ROLE_TYPE_ID_FROM, ROLE_TYPE_ID_TO, FROM_DATE,PARTY_RELATIONSHIP_TYPE_ID, LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+						VALUES(sPartyId,'admin','CONTACT','EMPLOYEE',timeEntry,'RESPONSIBLE_FOR',timeEntry,timeEntry,timeEntry,timeEntry)
+						ON DUPLICATE KEY UPDATE LAST_UPDATED_TX_STAMP = timeEntry;				
+					END IF;
+					
+					-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,30,'party_relationship-ended',sPartyId,NOW(),'RELATIONSHIP');	
+							
+			
+					-- Update #3 Update the New Account Association with Contact
+                   
+                    -- Generate the SeqNum for RelationShip Association with Contact and LCIN		
+                    -- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,40,'ContactAccount Association - Started',sPartyId,NOW(),'ContactAssociationwithAccount');
+				
+					SELECT CASE WHEN COUNT(*) = 0 THEN 'I' ELSE 'U' END,party_Rel_Assoc_Id,IFNULL(FROM_DATE,timeEntry) INTO sMode,sParty_Rel_Assoc_Id ,sFROM_DATE FROM party_relationship WHERE PARTY_ID_FROM =sPartyId AND PARTY_ID_TO=sLCIN AND
+                     ROLE_TYPE_ID_FROM ='CONTACT' AND ROLE_TYPE_ID_TO='ACCOUNT' AND PARTY_RELATIONSHIP_TYPE_ID = 'CONTACT_REL_INV' LIMIT 1;
+						
+					-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,40,sParty_Rel_Assoc_Id,sPartyId,NOW(),'sParty_Rel_Assoc_Id Exists');	
+									 
+					IF(sMode ='I') THEN
+														
+									SET sParty_Rel_Assoc_Id = GET_SEQ_ID('PartyRelationshipAssoc') ;
+									-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,40,sParty_Rel_Assoc_Id,sParty_Rel_Assoc_Id,NOW(),'sParty_Rel_Assoc_Id Added');
+											
+												-- Create the RelationShip between Contact and Account 			
+												INSERT INTO party_relationship
+												(PARTY_ID_FROM, PARTY_ID_TO, ROLE_TYPE_ID_FROM, ROLE_TYPE_ID_TO, FROM_DATE,PARTY_RELATIONSHIP_TYPE_ID,party_Rel_Assoc_Id, LAST_UPDATED_STAMP, 
+												LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+												VALUES(sPartyId,sLCIN,'CONTACT','ACCOUNT',sFROM_DATE,'CONTACT_REL_INV',sParty_Rel_Assoc_Id,timeEntry,timeEntry,timeEntry,timeEntry)
+												ON DUPLICATE KEY UPDATE party_Rel_Assoc_Id=sParty_Rel_Assoc_Id, LAST_UPDATED_TX_STAMP = timeEntry; 
+												
+												-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,40,sParty_Rel_Assoc_Id,sPartyId,NOW(),'ContactAssociation Added');		
+					END IF;			
+								
+				-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,50,'Designation Association by Account - Started',sPartyId,NOW(),sParty_Rel_Assoc_Id);
+				
+                    -- Identify the Designation Enum ID based on the Description from HDP Contact table			
+					SELECT ENUM_CODE,ENUM_ID  INTO sENUM_CODE,sENUM_ID FROM ENUMERATION WHERE enum_type_id='PARTY_DESIGNATION' AND DESCRIPTION=sRP_DESGINATION LIMIT 1;
+						
+                        -- Update the Default Contact Status if the Account and Contact Designation Code Matches
+                        IF (sENUM_CODE='012')  THEN
+                                UPDATE party_relationship SET STATUS_ID='PARTY_DEFAULT',is_marketable='Y',created_By_User_Login_Id ='admin' 
+                                WHERE PARTY_ID_FROM=sPartyId AND PARTY_ID_TO=sLCIN AND ROLE_TYPE_ID_FROM = 'CONTACT' AND  ROLE_TYPE_ID_TO ='ACCOUNT' ;
+                        ELSE
+								        UPDATE party_relationship SET STATUS_ID=null, is_marketable='Y',created_By_User_Login_Id ='admin' 
+                                WHERE PARTY_ID_FROM=sPartyId AND PARTY_ID_TO=sLCIN AND ROLE_TYPE_ID_FROM = 'CONTACT' AND  ROLE_TYPE_ID_TO ='ACCOUNT' ;        
+                        END IF ;        
+                        -- Update the ***Designation*** of the Current Row of Contact based on the Association of Account             
+
+								SET  ENUM_EXIST =(SELECT COUNT(*) FROM hdp_contact_designation_assoc WHERE ACCOUNT_ID = sLCIN AND CONTACT_ID = sPartyId 
+                                    AND DESIGNATION_ENUM_ID =sENUM_ID AND party_Rel_Assoc_Id =sParty_Rel_Assoc_Id);
+
+								IF ( ENUM_EXIST = 0)   THEN 
+									-- Generate New Seq ID for HDP Contact Designation Association Table
+									SET assId=GET_SEQ_ID('HdpContactDesignationAssoc');
+									-- Verify the 
+										IF (( SELECT COUNT(HDP_CONTACT_DESIGNATION_ASSOC_ID) FROM hdp_contact_designation_assoc WHERE ACCOUNT_ID = sLCIN AND CONTACT_ID = sPartyId 
+											AND DESIGNATION_ENUM_ID =sENUM_ID AND party_Rel_Assoc_Id =sParty_Rel_Assoc_Id)=0) THEN
+											
+											-- Evaluate the Next Seqnum for Designation Insert
+											SET seqNo=(SELECT IFNULL(MAX(SEQUENCE_NUMBER),0) FROM hdp_contact_designation_assoc WHERE ACCOUNT_ID = sLCIN AND CONTACT_ID = sPartyId AND party_Rel_Assoc_Id =sParty_Rel_Assoc_Id );
+											
+											-- Create record for each Designation provided for the Contact relationship by Account
+											INSERT INTO hdp_contact_designation_assoc( HDP_CONTACT_DESIGNATION_ASSOC_ID,ACCOUNT_ID,CONTACT_ID,
+											DESIGNATION_ENUM_ID,DESIGNATION_NAME,SEQUENCE_NUMBER,party_Rel_Assoc_Id)
+											VALUES( assId,sLCIN,sPartyId,sENUM_ID,sRP_DESGINATION,seqNo+1,sParty_Rel_Assoc_Id);
+										
+											SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+										
+											INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+															VALUES(sParty_Rel_Assoc_Id, assocId, 'DESIGNATION', assId, 'Y',dtStart,dtStart,dtStart,dtStart);
+										
+										END IF ;
+								END IF ;
+								
+							-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,50,'Designation Association by Account - End',sPartyId,NOW(),sParty_Rel_Assoc_Id);	
+									
+							-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,50,'Designation Association by Account - End',sPartyId,NOW(),sParty_Rel_Assoc_Id);	
+									
+											-- Provide the Implementation to Validate the IDEAL Email and AOAS Email for Primary Email
+																						
+												SET primary_email = (SELECT IF (rpIdealEmail IS NOT NULL, rpIdealEmail, rpAosEmail));
+												
+												-- Check the Primary Is NUll and Ideal is New from it purpose type
+												
+												
+												-- Check the RelationShip ID for the Contact and Account for adding Email Specific to Relationship in Purpose.
+												SET pcontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+												WHERE contact_mech_purpose_type_id = 'PRIMARY_EMAIL' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+															
+												IF (pcontact_mech_id<>'') THEN
+												 
+															SET ideal_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+															WHERE contact_mech_purpose_type_id = 'IDEAL_EMAIL_ADDRESS' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+															 
+													
+															SELECT INFO_STRING INTO EMAIL_PREV FROM CONTACT_MECH WHERE CONTACT_MECH_ID=ideal_mech_id;
+															
+															
+															IF(EMAIL_PREV <> primary_email) THEN
+															
+																 
+																INSERT  INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																		VALUES(pcontact_mech_id,'EMAIL_ADDRESS',primary_email,dtStart,dtStart,dtStart,dtStart)
+																		ON DUPLICATE KEY UPDATE INFO_STRING=primary_email,  LAST_UPDATED_TX_STAMP = timeEntry; 
+															END IF;
+															
+																UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+																WHERE contact_mech_purpose_type_id = 'PRIMARY_EMAIL' AND party_id = sPartyId AND contact_mech_id=pcontact_mech_id;
+															
+												ELSEIF(primary_email<>'') THEN
+												
+													-- Check Primary Email EXISTS
+													SET primcontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+												    WHERE contact_mech_purpose_type_id = 'PRIMARY_EMAIL' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+													
+														if(primcontact_mech_id<>'') then		
+																			
+																	
+																			INSERT  INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																			VALUES(primcontact_mech_id,'EMAIL_ADDRESS',primary_email,dtStart,dtStart,dtStart,dtStart)
+																			ON DUPLICATE KEY UPDATE INFO_STRING=primary_email,  LAST_UPDATED_TX_STAMP = timeEntry; 
+																			
+																			UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+																			WHERE contact_mech_purpose_type_id = 'PRIMARY_EMAIL' AND party_id = sPartyId AND contact_mech_id=primcontact_mech_id;
+												
+														ELSE
+																			SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																			INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(contactMechId,'EMAIL_ADDRESS',primary_email,dtStart,dtStart,dtStart,dtStart);
+
+																			INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation, email_valid_ind) 
+																				VALUES(contactMechId, sPartyId, dtStart, 'Y', 'Y');
+
+																			INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																				VALUES(contactMechId, sPartyId, 'PRIMARY_EMAIL', dtStart, sParty_Rel_Assoc_Id);
+																			-- Determine the Next Seq for the Association based on RelationShip ID
+																			SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																			
+																			INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(sParty_Rel_Assoc_Id, assocId, 'EMAIL', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																	
+														
+														END IF;				
+												END IF;
+												
+												-- IDEAL_EMAIL_ADDRESS
+												-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,60,'Ideal Email Address - Start',sPartyId,NOW(),rpIdealEmail);			
+
+												SET Idealcontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+												WHERE contact_mech_purpose_type_id = 'IDEAL_EMAIL_ADDRESS' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+
+												IF (Idealcontact_mech_id <>'') THEN
+													   
+												   INSERT  INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+															VALUES(Idealcontact_mech_id,'EMAIL_ADDRESS',rpIdealEmail,dtStart,dtStart,dtStart,dtStart)
+															ON DUPLICATE KEY UPDATE INFO_STRING=rpIdealEmail,  LAST_UPDATED_TX_STAMP = timeEntry;
+													UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+													WHERE contact_mech_purpose_type_id = 'IDEAL_EMAIL_ADDRESS' AND party_id = sPartyId AND contact_mech_id=Idealcontact_mech_id;
+															
+												ELSEIF (rpIdealEmail <> '') THEN
+														SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+														INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+															VALUES(contactMechId,'EMAIL_ADDRESS',rpIdealEmail,dtStart,dtStart,dtStart,dtStart);
+
+														INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation, email_valid_ind) 
+															VALUES(contactMechId, sPartyId, dtStart, 'Y', 'Y');
+
+														INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+															VALUES(contactMechId, sPartyId, 'IDEAL_EMAIL_ADDRESS', dtStart, sParty_Rel_Assoc_Id);
+														-- Determine the Next Seq for the Association based on RelationShip ID
+														SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+														
+														INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+															VALUES(sParty_Rel_Assoc_Id, assocId, 'EMAIL', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+														
+												END IF;
+												
+												-- AOS_EMAIL_ADDRESS
+											-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,60,'AOS Email Address - Start',sPartyId,NOW(),rpAosEmail);			   
+
+												 SET Aoscontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+												WHERE contact_mech_purpose_type_id = 'AOS_EMAIL_ADDRESS' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+
+												IF (Aoscontact_mech_id <> '') THEN
+													   -- Do nothing
+													    INSERT  INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+															VALUES(Aoscontact_mech_id,'EMAIL_ADDRESS',rpAosEmail,dtStart,dtStart,dtStart,dtStart)
+															ON DUPLICATE KEY UPDATE INFO_STRING=rpAosEmail,  LAST_UPDATED_TX_STAMP = timeEntry;
+														UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+															WHERE contact_mech_purpose_type_id = 'AOS_EMAIL_ADDRESS' AND party_id = sPartyId AND contact_mech_id=pcontact_mech_id;
+												ELSEIF (rpAosEmail <> '') THEN
+														SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+														INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+															VALUES(contactMechId,'EMAIL_ADDRESS',rpAosEmail,dtStart,dtStart,dtStart,dtStart);
+
+														INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation, email_valid_ind) 
+															VALUES(contactMechId, sPartyId, dtStart, 'Y', 'Y');
+
+														INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+															VALUES(contactMechId, sPartyId, 'AOS_EMAIL_ADDRESS', dtStart, sParty_Rel_Assoc_Id);
+														-- Determine the Next Seq for the Association based on RelationShip ID
+														SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+														
+														INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+															VALUES(sParty_Rel_Assoc_Id, assocId, 'EMAIL', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+															
+												END IF;
+                    
+														-- PRIMARY_PHONE
+																	
+																	SET primaryMobile = (SELECT IF (rpIdealMobile IS NOT NULL, rpIdealMobile, rpAosMobile));
+																	
+																	-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,60,'PRIMARY_PHONE - Start',sPartyId,NOW(),primaryMobile);		
+																				
+																	SET pPhonecontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+																	WHERE contact_mech_purpose_type_id = 'PRIMARY_PHONE' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+
+																	IF (pPhonecontact_mech_id <> '') THEN
+																																			
+																		
+																		SET ideal_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+																		WHERE contact_mech_purpose_type_id = 'IDEAL_MOBILE_PHONE' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+															 
+													
+																		SELECT CONTACT_NUMBER INTO TELE_PREV FROM telecom_number WHERE CONTACT_MECH_ID=ideal_mech_id;
+																		
+																	
+																		IF (TELE_PREV<>primaryMobile) THEN
+																		
+																	    INSERT  INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																		VALUES(pPhonecontact_mech_id,'65','',primaryMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry)
+																		ON DUPLICATE KEY UPDATE CONTACT_NUMBER=primaryMobile;
+																		
+																		END IF ;
+																		
+																		UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+																		WHERE contact_mech_purpose_type_id = 'PRIMARY_PHONE' AND party_id = sPartyId AND contact_mech_id=pPhonecontact_mech_id;
+																	ELSEIF (primaryMobile <> '') THEN
+																		-- Check Primary Email EXISTS
+																			SET primcontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+																			WHERE contact_mech_purpose_type_id = 'PRIMARY_PHONE' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+																			INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,8888,'---',primary_email,NOW(),primcontact_mech_id);
+																		
+																		if(primcontact_mech_id<>'') then		
+																			
+																			INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,7777,'---',primary_email,NOW(),primcontact_mech_id);
+																
+																				 INSERT  INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																					VALUES(primcontact_mech_id,'65','',primaryMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry)
+																					ON DUPLICATE KEY UPDATE CONTACT_NUMBER=primaryMobile;
+																			
+																			UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+																			WHERE contact_mech_purpose_type_id = 'PRIMARY_PHONE' AND party_id = sPartyId AND contact_mech_id=primcontact_mech_id;
+												
+																		ELSE	
+																			
+																			
+																			SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																			INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(contactMechId,'TELECOM_NUMBER',dtStart,dtStart,dtStart,dtStart);
+
+																			INSERT INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																				VALUES(contactMechId, NULL,NULL, primaryMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry);
+
+																			INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation) 
+																				VALUES(contactMechId, sPartyId, dtStart, 'Y');
+
+																			INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																				VALUES(contactMechId, sPartyId, 'PRIMARY_PHONE', dtStart, sParty_Rel_Assoc_Id);
+																			-- Determine the Next Seq for the Association based on RelationShip ID
+																			SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																			
+																			INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(sParty_Rel_Assoc_Id, assocId, 'PHONE', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																		END IF;		
+																	END IF;
+                    
+																	-- IDEAL_MOBILE_PHONE
+																	-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,60,'IDEAL_MOBILE_PHONE - Start',sPartyId,NOW(),rpIdealMobile);	
+																	
+																	SET iDEALPhonecontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+																	WHERE contact_mech_purpose_type_id = 'IDEAL_MOBILE_PHONE' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+
+																	IF (iDEALPhonecontact_mech_id <> '') THEN
+																		   -- Do nothing
+																	 INSERT  INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																		VALUES(iDEALPhonecontact_mech_id,'65','',rpIdealMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry)
+																		ON DUPLICATE KEY UPDATE CONTACT_NUMBER=rpIdealMobile;
+																		
+																																			
+																		UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+																		WHERE contact_mech_purpose_type_id = 'IDEAL_MOBILE_PHONE' AND party_id = sPartyId AND contact_mech_id=iDEALPhonecontact_mech_id;
+																		
+																	ELSEIF (rpIdealMobile <> '') THEN
+																			SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																			INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(contactMechId,'TELECOM_NUMBER',dtStart,dtStart,dtStart,dtStart);
+
+																			INSERT INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																				VALUES(contactMechId, NULL,NULL, rpIdealMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry);
+
+																			INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation) 
+																				VALUES(contactMechId, sPartyId, dtStart, 'Y');
+
+																			INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																				VALUES(contactMechId, sPartyId, 'IDEAL_MOBILE_PHONE', dtStart, sParty_Rel_Assoc_Id);
+																			-- Determine the Next Seq for the Association based on RelationShip ID
+																			SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																			
+																			INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(sParty_Rel_Assoc_Id, assocId, 'PHONE', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																				
+																	END IF;
+                    
+																-- AOS_MOBILE_PHONE
+																
+																    -- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,60,'AOS_MOBILE_PHONE - Start',sPartyId,NOW(),rpAosMobile);	
+																	
+																SET aOSPhonecontact_mech_id = (SELECT contact_mech_id FROM party_contact_mech_purpose 
+																WHERE contact_mech_purpose_type_id = 'AOS_MOBILE_PHONE' AND party_id = sPartyId AND (THRU_DATE IS NULL OR THRU_DATE>timeEntry) LIMIT 1);
+																	
+																	
+																IF (aOSPhonecontact_mech_id <> '') THEN
+																	   -- Do nothing
+																    INSERT  INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																		VALUES(aOSPhonecontact_mech_id,'65','',rpAosMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry)
+																		ON DUPLICATE KEY UPDATE CONTACT_NUMBER=rpAosMobile,  LAST_UPDATED_TX_STAMP = timeEntry;
+																		
+																																			
+																		UPDATE party_contact_mech_purpose SET party_Rel_Assoc_Id=sParty_Rel_Assoc_Id 
+																		WHERE contact_mech_purpose_type_id = 'AOS_MOBILE_PHONE' AND party_id = sPartyId AND contact_mech_id=aOSPhonecontact_mech_id;
+																ELSEIF(rpAosMobile<>'') THEN
+																		SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																		INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																			VALUES(contactMechId,'TELECOM_NUMBER',dtStart,dtStart,dtStart,dtStart);
+
+																		INSERT INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																			VALUES(contactMechId, NULL,NULL, rpAosMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry);
+
+																		INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation) 
+																			VALUES(contactMechId, sPartyId, dtStart, 'Y');
+
+																		INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																			VALUES(contactMechId, sPartyId, 'AOS_MOBILE_PHONE', dtStart, sParty_Rel_Assoc_Id);
+																		-- Determine the Next Seq for the Association based on RelationShip ID
+																		SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																		
+																		INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																			VALUES(sParty_Rel_Assoc_Id, assocId, 'PHONE', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																			
+																END IF;
+           
+															
+           
+
+						END IF;
+          
+                    
+				-- Perform Insert or Update when the Party Exists in the Ofbiz tables
+			ELSEIF((SELECT COUNT(party_id) FROM party WHERE party_id  = sPartyId) = 0) THEN
+							-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,70,'New Contact - Party',sPartyId,NOW(),'New Party- StART');	
+						IF(isAccountAvl='Y') THEN
+								-- Create Party ID for Contact for new Party.
+										INSERT INTO party 
+											(PARTY_ID,PARTY_TYPE_ID,EXTERNAL_ID,STATUS_ID,CREATED_DATE,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+											VALUES(sPartyId,'PERSON',sPartyId,'PARTY_ENABLED',timeEntry,timeEntry,timeEntry,timeEntry,timeEntry);
+											
+								-- Create Role for Contact [CUSTOMER,BILL_TO_CUSTOMER,CONTACT]
+										INSERT INTO party_role
+											(PARTY_ID, ROLE_TYPE_ID, LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+											VALUES(sPartyId,'CUSTOMER',timeEntry,timeEntry,timeEntry,timeEntry);
+											
+										INSERT INTO party_role
+											(PARTY_ID, ROLE_TYPE_ID, LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+											VALUES(sPartyId,'BILL_TO_CUSTOMER',timeEntry,timeEntry,timeEntry,timeEntry);
+											
+										INSERT INTO party_role 
+											(PARTY_ID, ROLE_TYPE_ID, LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+											VALUES(sPartyId,'CONTACT',timeEntry,timeEntry,timeEntry,timeEntry);
+								-- Create Role for Contact [CUSTOMER,BILL_TO_CUSTOMER,CONTACT]  
+										INSERT INTO PERSON
+											(PARTY_ID,FIRST_NAME,LAST_NAME,BIRTH_DATE,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP, CREATED_TX_STAMP)
+											VALUES(sPartyId, sFristName, sLastName, srp_bday, timeEntry,timeEntry,timeEntry,timeEntry);
+								-- Create Contact Role with Relationship with Company			
+										INSERT INTO party_relationship
+											(PARTY_ID_FROM, PARTY_ID_TO, ROLE_TYPE_ID_FROM, ROLE_TYPE_ID_TO, FROM_DATE,PARTY_RELATIONSHIP_TYPE_ID, LAST_UPDATED_STAMP, 
+											LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+											VALUES(sPartyId,'admin','CONTACT','EMPLOYEE',timeEntry,'RESPONSIBLE_FOR',timeEntry,timeEntry,timeEntry,timeEntry);
+		      
+										-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,80,'New Contact - party_relationship-end',sPartyId,NOW(),'Loaded the Contact Basic information');	
+											
+							
+									-- Create External ID for third Party System Reference			
+											INSERT INTO party_identification
+												(PARTY_ID, PARTY_IDENTIFICATION_TYPE_ID, ID_VALUE, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+												VALUES(sPartyId,'EXT_PARTY_ID',sPartyId,timeEntry,timeEntry,timeEntry,timeEntry);
+									-- Generate the SeqNum for RelationShip Association with Contact and LCIN				
+											SET sParty_Rel_Assoc_Id = GET_SEQ_ID('PartyRelationshipAssoc') ;
+									-- Create the RelationShip between Contact and Account 			
+											INSERT INTO party_relationship
+												(PARTY_ID_FROM, PARTY_ID_TO, ROLE_TYPE_ID_FROM, ROLE_TYPE_ID_TO, FROM_DATE,PARTY_RELATIONSHIP_TYPE_ID,party_Rel_Assoc_Id, LAST_UPDATED_STAMP, 
+												LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+												VALUES(sPartyId,sLCIN,'CONTACT','ACCOUNT',timeEntry,'CONTACT_REL_INV',sParty_Rel_Assoc_Id,timeEntry,timeEntry,timeEntry,timeEntry);
+											
+									-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,90,'New Contact -  Association Relationship',sPartyId,NOW(),'Loaded the Contact Basic information');	
+									-- Identify the Designation Enum ID based on the Description from HDP Contact table			
+												SELECT ENUM_CODE,ENUM_ID  INTO sENUM_CODE,sENUM_ID FROM ENUMERATION WHERE enum_type_id='PARTY_DESIGNATION' AND DESCRIPTION=sRP_DESGINATION LIMIT 1;
+					
+									-- Update the Default Contact Status if the Account and Contact Designation Code Matches
+											IF (sENUM_CODE='012')  THEN
+													UPDATE party_relationship SET STATUS_ID='PARTY_DEFAULT',is_marketable='Y',created_By_User_Login_Id ='admin' 
+													WHERE PARTY_ID_FROM=sPartyId AND PARTY_ID_TO=sLCIN AND ROLE_TYPE_ID_FROM = 'CONTACT' AND  ROLE_TYPE_ID_TO ='ACCOUNT';
+											ELSE
+											      UPDATE party_relationship SET STATUS_ID=null,is_marketable='Y',created_By_User_Login_Id ='admin' 
+													WHERE PARTY_ID_FROM=sPartyId AND PARTY_ID_TO=sLCIN AND ROLE_TYPE_ID_FROM = 'CONTACT' AND  ROLE_TYPE_ID_TO ='ACCOUNT';
+											END IF ;        
+									-- Update the ***Designation*** of the Current Row of Contact based on the Association of Account             
+											
+											
+											IF ( sENUM_ID <> '')   THEN 
+											-- Generate New Seq ID for HDP Contact Designation Association Table
+											SET assId=GET_SEQ_ID('HdpContactDesignationAssoc');
+											-- Verify the 
+												IF (( SELECT COUNT(*) FROM hdp_contact_designation_assoc WHERE ACCOUNT_ID = sLCIN AND CONTACT_ID = sPartyId 
+												AND DESIGNATION_ENUM_ID =sENUM_ID AND party_Rel_Assoc_Id =sParty_Rel_Assoc_Id)=0) THEN
+													-- Evaluate the Next Seqnum for Designation Insert
+													SET seqNo=(SELECT IFNULL(MAX(SEQUENCE_NUMBER),0) FROM hdp_contact_designation_assoc WHERE ACCOUNT_ID = sLCIN AND CONTACT_ID = sPartyId AND party_Rel_Assoc_Id =sParty_Rel_Assoc_Id);
+													-- Create record for each Designation provided for the Contact relationship by Account
+													INSERT INTO hdp_contact_designation_assoc( HDP_CONTACT_DESIGNATION_ASSOC_ID,ACCOUNT_ID,CONTACT_ID,
+													DESIGNATION_ENUM_ID,DESIGNATION_NAME,SEQUENCE_NUMBER,party_Rel_Assoc_Id)
+													VALUES( assId,sLCIN,sPartyId,sENUM_ID,sRP_DESGINATION,seqNo+1,sParty_Rel_Assoc_Id);
+												
+													SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+												
+													INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+														VALUES(sParty_Rel_Assoc_Id, assocId, 'DESIGNATION', assId, 'Y',dtStart,dtStart,dtStart,dtStart);
+												
+												END IF ;
+											END IF ;
+									-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,100,'New Contact - Designation Ended',sPartyId,NOW(),sRP_DESGINATION);	
+									
+														-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,110,'New Contact - PRIMARY_EMAIL - Start',sPartyId,NOW(),rpIdealEmail);
+														-- Provide the Implementation to Validate the IDEAL Email and AOAS Email for Primary Email
+														SET primary_email = (SELECT IF (rpIdealEmail IS NOT NULL, rpIdealEmail, rpAosEmail));
+														IF(primary_email<>'') THEN
+																SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																	VALUES(contactMechId,'EMAIL_ADDRESS',primary_email,dtStart,dtStart,dtStart,dtStart);
+
+																INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation, email_valid_ind) 
+																	VALUES(contactMechId, sPartyId, dtStart, 'Y', 'Y');
+
+																INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																	VALUES(contactMechId, sPartyId, 'PRIMARY_EMAIL', dtStart, sParty_Rel_Assoc_Id);
+																-- Determine the Next Seq for the Association based on RelationShip ID
+																SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																
+																INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																	VALUES(sParty_Rel_Assoc_Id, assocId, 'EMAIL', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																	
+														END IF;
+												
+														
+								
+														-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,120,'New Contact - Ideal Email Address - Start',sPartyId,NOW(),rpIdealEmail);			
+
+														IF (rpIdealEmail <> '') THEN
+																SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																	VALUES(contactMechId,'EMAIL_ADDRESS',rpIdealEmail,dtStart,dtStart,dtStart,dtStart);
+
+																INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation, email_valid_ind) 
+																	VALUES(contactMechId, sPartyId, dtStart, 'Y', 'Y');
+
+																INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																	VALUES(contactMechId, sPartyId, 'IDEAL_EMAIL_ADDRESS', dtStart, sParty_Rel_Assoc_Id);
+																-- Determine the Next Seq for the Association based on RelationShip ID
+																SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																
+																INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																	VALUES(sParty_Rel_Assoc_Id, assocId, 'EMAIL', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																	
+														END IF;
+														
+														-- AOS_EMAIL_ADDRESS
+															-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,130,'New Contact - AOS Email Address - Start',sPartyId,NOW(),rpAosEmail);			   
+
+																 IF (rpAosEmail <> '') THEN
+																		SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																		INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,INFO_STRING,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																			VALUES(contactMechId,'EMAIL_ADDRESS',rpAosEmail,dtStart,dtStart,dtStart,dtStart);
+
+																		INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation, email_valid_ind) 
+																			VALUES(contactMechId, sPartyId, dtStart, 'Y', 'Y');
+
+																		INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																			VALUES(contactMechId, sPartyId, 'AOS_EMAIL_ADDRESS', dtStart, sParty_Rel_Assoc_Id);
+																		-- Determine the Next Seq for the Association based on RelationShip ID
+																		SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																		
+																		INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																			VALUES(sParty_Rel_Assoc_Id, assocId, 'EMAIL', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																			
+																END IF;
+												
+														-- PRIMARY_PHONE
+													
+																SET primaryMobile = (SELECT IF (rpIdealMobile IS NOT NULL, rpIdealMobile, rpAosMobile));
+																	
+																	-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,140,'New Contact - PRIMARY_PHONE - Start',sPartyId,timeEntry,primaryMobile);		
+																				
+																	IF (primaryMobile <> '') THEN
+																			SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																			INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(contactMechId,'TELECOM_NUMBER',dtStart,dtStart,dtStart,dtStart);
+
+																			INSERT INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																				VALUES(contactMechId, NULL,NULL, primaryMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry);
+
+																			INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation) 
+																				VALUES(contactMechId, sPartyId, dtStart, 'Y');
+
+																			INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																				VALUES(contactMechId, sPartyId, 'PRIMARY_PHONE', dtStart, sParty_Rel_Assoc_Id);
+																			-- Determine the Next Seq for the Association based on RelationShip ID
+																			SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																			
+																			INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(sParty_Rel_Assoc_Id, assocId, 'PHONE', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																				
+																	END IF;
+													
+													
+														-- IDEAL_MOBILE_PHONE
+																	-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,150,'New Contact - IDEAL_MOBILE_PHONE - Start',sPartyId,NOW(),rpIdealMobile);	
+																	
+																IF (rpIdealMobile <> '') THEN
+																			SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																			INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(contactMechId,'TELECOM_NUMBER',dtStart,dtStart,dtStart,dtStart);
+
+																			INSERT INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																				VALUES(contactMechId, NULL,NULL, rpIdealMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry);
+
+																			INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation) 
+																				VALUES(contactMechId, sPartyId, dtStart, 'Y');
+
+																			INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																				VALUES(contactMechId, sPartyId, 'IDEAL_MOBILE_PHONE', dtStart, sParty_Rel_Assoc_Id);
+																			-- Determine the Next Seq for the Association based on RelationShip ID
+																			SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																			
+																			INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																				VALUES(sParty_Rel_Assoc_Id, assocId, 'PHONE', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																				
+																	END IF;
+                    
+																-- AOS_MOBILE_PHONE
+																
+																    -- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,160,'New Contact - AOS_MOBILE_PHONE - Start',sPartyId,NOW(),rpAosMobile);	
+																	
+																IF(rpAosMobile<>'') THEN
+																		SET contactMechId=GET_SEQ_ID('ContactMech');     -- Generate New Seq ID for Contact Mech Table   
+																		INSERT INTO contact_mech(contact_mech_id, contact_mech_type_id,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																			VALUES(contactMechId,'TELECOM_NUMBER',dtStart,dtStart,dtStart,dtStart);
+
+																		INSERT INTO telecom_number(CONTACT_MECH_ID, COUNTRY_CODE, AREA_CODE, CONTACT_NUMBER, PHONE_VALID_IND, LAST_UPDATED_STAMP, LAST_UPDATED_TX_STAMP, CREATED_STAMP, CREATED_TX_STAMP)
+																			VALUES(contactMechId, NULL,NULL, rpAosMobile, 'Y', timeEntry,timeEntry,timeEntry,timeEntry);
+
+																		INSERT INTO party_contact_mech(contact_mech_id, party_id, from_date, allow_solicitation) 
+																			VALUES(contactMechId, sPartyId, dtStart, 'Y');
+
+																		INSERT INTO party_contact_mech_purpose(CONTACT_MECH_ID, PARTY_ID, CONTACT_MECH_PURPOSE_TYPE_ID, FROM_DATE, party_Rel_Assoc_Id)
+																			VALUES(contactMechId, sPartyId, 'AOS_MOBILE_PHONE', dtStart, sParty_Rel_Assoc_Id);
+																		-- Determine the Next Seq for the Association based on RelationShip ID
+																		SET assocId = (SELECT IFNULL(MAX(ASSOC_SEQ_ID),0)+1 FROM party_relationship_assoc WHERE PARTY_REL_ASSOC_ID=sParty_Rel_Assoc_Id );
+																		
+																		INSERT INTO party_relationship_assoc(PARTY_REL_ASSOC_ID,ASSOC_SEQ_ID,ASSOC_TYPE_ID,ASSOC_ID,SOLICITATION_STATUS,LAST_UPDATED_STAMP,LAST_UPDATED_TX_STAMP,CREATED_STAMP,CREATED_TX_STAMP)
+																			VALUES(sParty_Rel_Assoc_Id, assocId, 'PHONE', contactMechId, 'Y',dtStart,dtStart,dtStart,dtStart);
+																			
+																END IF;
+					
+									
+						
+							-- INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) VALUES (sProcessId,'SUCCESS','New Contact Creation End',sPartyId,NOW(),'All Data Loaded');							
+							
+						ELSE
+						
+							 INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1) 	VALUES (sProcessId,'ERROR','New Contact Creation',sPartyId,NOW(),'LCIN ID do not exists in Ofbiz from SME Source');	
+							
+						END IF ;
+                
+                    
+		END IF;	    
+   
+                    
+	-- End Statement for Committing the Record in the HDP_CONTACt table
+	UPDATE hdp_contact SET import_Status_Id='DATAIMP_IMPORTED' , processed_Timestamp=timeEntry,import_Error=NULL 
+	WHERE RP_IDENTITYNO=sPartyId  AND LCIN= sLCIN  AND CNTRY_CDE= sCNTRY_CDE 	 AND BUSINESS_DT=sBUSINESS_DT AND RP_DESIGNATION= sRP_DESGINATION  ; 
+	
+	INSERT INTO LOG_PROC  (PROCESS_ID,STATUS,TABLE_NAME,ID,TIME_STAMP,LOG_MSG1,LOG_MSG2) VALUES (sProcessId,200,'Completed',sPartyId,NOW(),sRP_DESGINATION,sCNTRY_CDE);	
+							
+			
+		
+		SET iCommit = iCommit + 1;
+			IF (iCommit = 200) THEN
+				COMMIT;
+				START TRANSACTION;
+				SET iCommit = 0;
+			END IF;
+			SET EOF = 0;
+		END IF;
+	UNTIL EOF = 1 END REPEAT;
+	
+	CLOSE cur;
+	
+	COMMIT;
+	
+	CALL log_proc_end(sProcessId, dtStart);
+	
+	END
